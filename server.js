@@ -1,58 +1,51 @@
-const express = require('express');
-const multer = require('multer');
-const axios = require('axios');
-const cors = require('cors');
-const fs = require('fs');
-require('dotenv').config();
+const express = require("express");
+const multer = require("multer");
+const fs = require("fs");
+const exifParser = require("exif-parser");
+const cors = require("cors");
 
 const app = express();
-const port = 3001;
-
-// Middleware
-app.use(cors()); // Allow frontend requests
+app.use(cors());
 app.use(express.json());
 
-// Multer configuration for file upload
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ dest: "uploads/" });
 
-// Hugging Face API settings
-const HF_MODEL_URL = "https://api-inference.huggingface.co/models/Hemg/AI-VS-REAL-IMAGE-DETECTION";
-const HF_API_KEY = process.env.HUGGINGFACE_API_KEY; // Store your API key in an .env file
-
-// Route to handle image upload and AI detection
-app.post('/upload', upload.single('image'), async (req, res) => {
+app.post("/upload", upload.single("image"), (req, res) => {
     if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded.' });
+        return res.status(400).json({ error: "No file uploaded" });
     }
 
-    try {
-        // Read the uploaded image
-        const imageBuffer = fs.readFileSync(req.file.path);
+    const filePath = req.file.path;
+    const buffer = fs.readFileSync(filePath);
+    const parser = exifParser.create(buffer);
+    const metadata = parser.parse();
 
-        // Send image to Hugging Face API
-        const response = await axios.post(HF_MODEL_URL, imageBuffer, {
-            headers: {
-                'Authorization': `Bearer ${HF_API_KEY}`,
-                'Content-Type': 'application/octet-stream',
-            }
-        });
+    // Extract required metadata fields
+    const requiredFields = [
+        "Make", // Camera Maker
+        "Model", // Camera Model
+        "FNumber", // F-stop
+        "ExposureTime", // Exposure time
+        "ISO", // ISO speed (previously ISOSpeedRatings)
+        "FocalLength" // Focal length
+    ];
 
-        // Delete uploaded file after processing
-        fs.unlinkSync(req.file.path);
+    // Check if all required fields exist
+    const missingFields = requiredFields.filter(field => !(field in metadata.tags));
 
-        // Send result to frontend
-        res.json({
-            result: response.data[0]?.label || 'Unknown',
-            confidence: response.data[0]?.score ? (response.data[0].score * 100).toFixed(2) : 'N/A'
-        });
+    console.log("Extracted Metadata:", metadata.tags);
+    console.log("Missing Fields:", missingFields);
 
-    } catch (error) {
-        console.error("Error processing image:", error);
-        res.status(500).json({ error: 'Failed to process image.' });
-    }
+    const isOriginal = missingFields.length === 0;
+
+    // Delete uploaded file after processing
+    fs.unlinkSync(filePath);
+
+    res.json({
+        metadata: metadata.tags,
+        isOriginal: isOriginal ? "✅ Original Image" : "❌ AI-Generated Image",
+        missingFields: missingFields.length > 0 ? missingFields : "None"
+    });
 });
 
-// Start the server
-app.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}`);
-});
+app.listen(5000, () => console.log("Server running on port 5000"));
